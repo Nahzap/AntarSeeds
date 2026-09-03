@@ -1,0 +1,459 @@
+experiment:
+  name: antarseeds_dinov2_vits14
+  description: AntarSeeds — DINOv2 ViT-S/14 (semillas)
+model:
+  backbone_name: dinov2_vits14
+  embedding_dim: 128
+  pretrained: true
+  use_attention: false
+  freeze_backbone: false
+  num_unfrozen_blocks: 2
+  pooling:
+    strategy: multi_spectral
+    layers:
+    - 3
+    - 11
+    statistics:
+    - mean
+    - max
+    - std
+    gem:
+      p: 3.0
+      learnable: false
+      eps: 1.0e-06
+    masked:
+      enabled: true
+      threshold: 0.3
+      weighting: soft
+    drop_token:
+      enabled: true
+      prob: 0.3
+      eval_mode: 'off'
+    norm_intermediate: true
+    layer_fusion: per_layer
+  projection:
+    layout: multi_tower
+    slice_layer_map:
+    - 11
+    - 11
+    - 3
+    - 3
+  projection_head:
+    hidden_dims:
+    - 256
+    - 256
+    use_batch_norm: false
+    use_layer_norm: true
+    dropout: 0.15
+    normalize_embeddings_ln: true
+    use_hardtanh: false
+    hardtanh_min: -2.0
+    hardtanh_max: 2.0
+data:
+  train_dir: data/processed/train
+  val_dir: data/processed/val
+  test_dir: data/processed/test
+  annotation_root: data/annotations
+  crop_source: seg
+  classes_per_batch: 8
+  samples_per_class: 2
+  batch_size: 16
+  val_batch_size: 2
+  auto_tune_resources: false
+  num_workers: 10
+  prefetch_factor: 4
+  val_num_workers: 2
+  worker_ram_budget_mb: 20570
+  pin_memory: true
+  loader_policy:
+    exclusive_train_workers_during_val: false
+    persistent_workers: true
+  drop_last: true
+  image_size: 252
+  resize_size: 252
+  normalize:
+    mode: imagenet
+    stats_path: data/stats/train_norm.json
+    mean:
+    - 0.485
+    - 0.456
+    - 0.406
+    std:
+    - 0.229
+    - 0.224
+    - 0.225
+    stain_method: 'null'
+augmentation:
+  performance_mode: true
+  random_horizontal_flip: 0.5
+  random_vertical_flip: 0.5
+  random_rotation: 180
+  random_crop: false
+  color_jitter:
+    brightness: 0.8
+    contrast: 0.8
+    saturation: 0.1
+    hue: 0.15
+  grayscale:
+    enabled: false
+    p: 1.0
+    override_norm: false
+  microscopy_specific:
+    random_gamma:
+      enabled: true
+      gamma_limit:
+      - 80
+      - 120
+      p: 0.5
+    gaussian_noise:
+      enabled: true
+      var_limit:
+      - 10.0
+      - 50.0
+      p: 0.5
+    blur:
+      enabled: true
+      p: 0.3
+      blur_limit: 3
+    optical_distortion:
+      enabled: true
+      p: 0.3
+      distort_limit: 0.1
+    clahe:
+      enabled: true
+      p: 0.5
+      clip_limit: 2.0
+      tile_grid_size:
+      - 8
+      - 8
+  sensor_noise_model:
+    enabled: false
+    stats_path: data/stats/sensor_noise.json
+    scale_factor: 1.0
+    blur:
+      enabled: true
+      blur_limit: 3
+      p: 0.3
+    optical_distortion:
+      enabled: false
+      distort_limit: 0.1
+      p: 0.3
+    clahe:
+      enabled: true
+      clip_limit: 2.0
+      tile_grid_size:
+      - 8
+      - 8
+      p: 0.5
+  domain_augmentation:
+    enabled: true
+    brightness_contrast_limit: 0.4
+    rgb_shift_limit: 25
+    tone_curve_scale: 0.2
+    downscale_min: 0.2
+    coarse_dropout_holes: 4
+  normalize:
+    mean:
+    - 0.485
+    - 0.456
+    - 0.406
+    std:
+    - 0.229
+    - 0.224
+    - 0.225
+training:
+  epochs: 10
+  warmup_epochs: 3
+  gradient_accumulation_steps: 4
+  loss:
+    type: sliced_ms
+    distance: euclidean
+    params:
+      num_slices: 4
+      alpha: 1.0
+      beta: 50.0
+      base_margin: 0.5
+  validation_metric: mAP@R
+  mining:
+    enabled: false
+    type: semihard
+    margin: 0.2
+  hard_mining:
+    enabled: false
+    ratio: 0.5
+    min_samples: 32
+    warmup_epochs: 3
+    adaptive: false
+  optimizer: adamw
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  backbone_lr_factor: 0.1
+  scheduler: cosine
+  scheduler_params:
+    T_max: 10
+    eta_min: 1.0e-06
+    pct_start: 0.3
+  gradient_clip_norm: 5.0
+  early_stopping:
+    enabled: true
+    patience: 20
+    min_delta: 0.001
+    restore_best_weights: true
+  save_every_n_epochs: 9
+  save_best_only: true
+  finetune_phases: []
+sota:
+  uniformity:
+    enabled: false
+    lambda: 1.0
+    t: 2.0
+  decorrelation:
+    enabled: false
+    lambda: 10.0
+    target_variance: 1.0
+    var_weight: 0.0
+    cov_weight: 1.0
+  disentanglement:
+    enabled: false
+    lambda: 5.0
+    weight: 1.0
+  amplitude_penalty:
+    enabled: false
+    lambda_weight: 0.1
+    penalty_type: clamping
+    margin: 0.5
+  nir:
+    enabled: false
+    lambda: 0.5
+    eps: 0.0001
+    min_samples_per_class: 2
+  hier:
+    enabled: false
+    lambda: 0.1
+    num_levels: 3
+    temperature: 0.1
+    taxonomy_path: null
+  dada:
+    enabled: false
+    dual_view_implemented: false
+    lambda: 0.1
+    kernel_bandwidth: 1.0
+  self_distillation:
+    enabled: false
+    ema_alpha: 0.999
+    temperature: 0.1
+    lambda: 0.5
+  embedding_space: euclidean
+  hyperbolic_curvature: 1.0
+  augmentation_mode: full
+  anti_collapse:
+    enabled: true
+    lambda: 0.1
+    t: 2.0
+detection_training:
+  enabled: true
+  input_size: 504
+  patch_size: 14
+  epochs: 25
+  batch_size: 8
+  val_batch_size: 8
+  num_workers: 4
+  max_train_images: 3000
+  max_val_images: 600
+  val_fast: false
+  val_det_f1_max_images: 400
+  learning_rate: 0.0001
+  backbone_lr_factor: 0.1
+  weight_decay: 0.01
+  optimizer: adamw
+  scheduler: cosine
+  scheduler_params:
+    T_max: 25
+    eta_min: 1.0e-06
+  loss:
+    type: bce_dice
+    bce_weight: 0.5
+    dice_weight: 0.5
+  validation_metric: det_f1
+  vis_every_n_images: 50
+  early_stopping:
+    enabled: true
+    patience: 10
+    min_delta: 0.005
+    restore_best_weights: true
+  freeze_backbone: true
+  num_unfrozen_blocks: 2
+  save_best_only: true
+  log_interval: 20
+  visualize_every_n_epochs: 5
+  vis_samples_per_epoch: 6
+  auto_evaluate: true
+  use_h5_cache: true
+  augmentation:
+    random_horizontal_flip: 0.5
+    random_vertical_flip: 0.5
+    random_rotation: 90
+    color_jitter_brightness: 0.2
+grain_detection:
+  enabled: true
+  detection_profile: seed
+  object_finder: roi_seed
+  crop_radius: 300
+  split_touching: true
+  seed_core_frac: 0.45
+  waist_frac: 0.8
+  drop_border_objects: false
+  localization_detector: u2net
+  active_detector:
+    backend: u2net
+    checkpoint: null
+    label: U2-NetP semillas
+    loaded_at: null
+  discovery_mode: false
+  model_type: u2netp
+  input_size: 320
+  saliency_threshold: 0.3
+  adaptive_k: 0.22
+  min_area: 800
+  max_area: 800000
+  max_area_frac: 0.5
+  morph_kernel_size: 3
+  min_circularity: 0.12
+  max_bbox_side_frac: 0.85
+  max_aspect_ratio: 8.0
+  min_classifier_confidence: 0.35
+  crop_padding: 0.2
+  crop_size: 252
+  use_mask: true
+  masked_pooling: true
+  image_cache_size: 32
+  image_cache_max_mb: 512
+  max_cached_image_mb: 32
+  max_load_side: 2590
+  nms_iou_threshold: 0.5
+  detection_strategy: coarse_fine
+  sliding_window_enabled: true
+  sliding_window_overlap: 0.25
+  sliding_window_stride: null
+  sliding_window_tile_size: null
+  sliding_window_k_boost: 0.05
+  supplement_detection_profile: sensitive
+  supplement_min_saliency: 0.42
+  supplement_min_peak: 0.38
+  verify_crop_padding: 0.45
+  verify_min_saliency: 0.32
+  verify_min_iou: 0.12
+  coarse_retain_min_saliency: 0.36
+  detector_bbox_expand_frac: 0.0
+  min_candidate_area: 1500
+  verify_detection_profile: sensitive
+  coarse_merge_iou: 0.28
+  coarse_supplement_merge_iou: 0.25
+  coarse_nms_iou: 0.32
+  peak_min_area: 800
+  peak_min_side: 28
+  peak_morph_kernel_size: 9
+  reject_max_area_frac: 0.14
+  reject_max_side_frac: null
+  drop_low_confidence_detections: false
+  min_visible_bbox_frac: 0.92
+  reject_edge_partial: true
+  edge_margin_frac: 0.008
+  min_edge_bbox_side_frac: 0.055
+  min_centroid_edge_inset_frac: 0.22
+  split_multi_peak_enabled: true
+  split_min_area_frac: 0.018
+  split_peak_min_saliency: 0.32
+  split_peak_min_area: 500
+  split_peak_morph_kernel: 3
+  min_saliency_fill_frac: 0.06
+  reject_multi_peak_area_frac: 0.055
+  min_classify_side_frac: 0.028
+  saliency_fill_threshold: 0.3
+  distance_threshold: 0.7
+  train_mask_bg_mode: imagenet_neutral
+  val_mask_bg_mode: imagenet_neutral
+logging:
+  tensorboard:
+    enabled: true
+    log_dir: runs
+  wandb:
+    enabled: false
+    project: antarseeds-metric-learning
+    entity: null
+  log_level: INFO
+  log_interval: 10
+paths:
+  model_save_dir: models
+  checkpoint_dir: models/checkpoints
+  log_dir: logs
+  experiment_dir: experiments
+hardware:
+  vram_warn_fraction: 0.9
+  use_gpu: true
+  gpu_ids:
+  - 0
+  use_amp: true
+  distributed: false
+  world_size: 1
+  faiss_gpu: false
+evaluation:
+  protocol: mlrc
+  n_runs: 10
+  nn_metric: null
+  map_at_r:
+    exact: true
+    candidate_multiplier: 12
+  nmi:
+    n_init: 10
+    n_seeds: 5
+  calibration:
+    enabled: true
+  select_checkpoint_on: val
+  report_final_on: test
+  progressive_plot_every_epochs: 2
+  gallery:
+    gradcam_per_class: 4
+    inference_per_class: 10
+    inference_preview: 10
+    fullimage_per_class: 3
+    tsne_max_samples: 3000
+  ablation:
+    enabled: false
+    when: after_training
+    skip_baseline_variant: true
+    on_failure: continue
+    epochs: null
+    matrices:
+      pooling: false
+      slices: false
+      layout: false
+      masked: false
+      augment: false
+      freeze: false
+      validation_metric: false
+  compute_precision_at_k:
+  - 1
+  - 5
+  - 10
+  visualize_embeddings: true
+  embedding_visualization_method: tsne
+reproducibility:
+  seed: 42
+  deterministic: false
+  benchmark: true
+inference:
+  index_type: flat
+  metric_type: inner_product
+  k_neighbors: 5
+  use_gpu: false
+  similarity_threshold: 0.6
+  confidence_threshold: 0.8
+  device: cuda
+gui:
+  detector_training:
+    resume: false
+    checkpoint: ''
+  dml_training:
+    resume: false
+    checkpoint: ''

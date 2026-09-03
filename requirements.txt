@@ -1,0 +1,26 @@
+# Entorno AntarSeeds / MetricLearning semillas
+# Python 3.11 — instalar con el .venv de la raíz del repo
+
+torch==2.5.1
+torchvision==0.20.1
+torchaudio==2.5.1
+
+PyQt5==5.15.11
+opencv-python>=4.8.0
+numpy>=1.24.0
+pandas>=2.0.0
+pillow>=9.5.0
+pyyaml>=6.0
+albumentations>=1.3.0
+h5py>=3.8.0
+tqdm>=4.65.0
+matplotlib>=3.7.0
+scikit-learn>=1.3.0
+scipy>=1.11.0
+pytorch-metric-learning>=2.0.0
+faiss-cpu>=1.7.4
+psutil>=5.9.0
+omegaconf>=2.3.0
+tensorboard>=2.13.0
+python-dotenv>=1.0.0
+gdown>=5.0.0

@@ -1,0 +1,3 @@
+La calibración está hecha sobre una cámara Basler de 2590x1942 pixeles.
+La medida observada corresponde a ~[2.6*2.0]cm^2. (medida en X vs Y).
+El test target corresponde a la regla de calibración micrométrica para microscopio (Microscope Micrometer Calibration Ruler), una lámina plástica transparente de alta precisión fabricada comúnmente en película de poliéster (PET).

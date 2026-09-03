@@ -1,0 +1,35 @@
+# AntarSeeds — Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Imágenes (enlaces / acervo)
+Data/images/
+
+# MetricLearning runtime
+MetricLearning/data/processed/
+MetricLearning/data/annotations/
+MetricLearning/data/stats/
+MetricLearning/models/weights/*.pth
+MetricLearning/runs/
+MetricLearning/logs/
+MetricLearning/**/__pycache__/
+.vscode/
+.idea/
+*.code-workspace
+logs/
+MetricLearning/experiments/
+MetricLearning/data/maps/
+MetricLearning/models/
+*.env
+*.env.*
+*backup*
+*.bak
+*.zip
+*.7z
+*.pth
+*.pt
+*.ckpt
+*.h5
+*.log
