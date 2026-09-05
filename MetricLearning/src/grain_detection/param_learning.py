@@ -7,8 +7,8 @@ por completo a `J_Bufonius` (~60.000 px²). Configurarlos a mano para cada clase
 es trabajo perdido y una fuente de lotes vacíos.
 
 Aquí se mide lo que el usuario ya aceptó como cuerpo válido y se derivan los
-topes que lo admiten. El mismo `SeededParams` alimenta el click y el lote, así
-que etiquetar a mano calibra el automático.
+topes que lo admiten. Click, preview y lote usan `SeededParams.from_config`
+sin rama paralela: etiquetar calibra el mismo algoritmo automático.
 """
 
 from __future__ import annotations

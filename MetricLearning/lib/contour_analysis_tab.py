@@ -12,7 +12,6 @@ Secciones:
 import logging
 import os
 import threading
-from dataclasses import replace
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -29,6 +28,17 @@ from PyQt5.QtGui import QImage, QPixmap, QPainter, QColor, QPen, QKeySequence
 
 from lib.styles import Styles, Colors
 from src.grain_detection.detection_profiles import PROFILES
+from src.grain_detection.annotation_paths import (
+    DEFAULT_ANNOTATION_ROOT,
+    AnnotationIdentityError,
+    find_existing_seg_path,
+    identity_for,
+    identity_params_for,
+    migrate_legacy_annotations,
+    resolved_image_path,
+    seg_matches_image,
+    seg_path_for as _seg_path_for_impl,
+)
 
 # Perfiles ofrecidos en la GUI. "seed" es el de AntarSeeds (semillas grandes,
 # alargadas); el resto proviene del dominio original de polen.
@@ -40,15 +50,14 @@ DEFAULT_PROFILE = "seed"
 FRAME_W, FRAME_H = 2590, 1942
 
 # Anotaciones centralizadas: un único destino para los .seg.
-ANNOTATION_ROOT = "data/annotations"
+ANNOTATION_ROOT = DEFAULT_ANNOTATION_ROOT
 SPLIT_DIRS = ["data/processed/train", "data/processed/val", "data/processed/test"]
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 
 
 def seg_path_for(img_path: Path) -> Path:
-    """Ruta .seg centralizada: ANNOTATION_ROOT/<clase>/<stem>.seg."""
-    img_path = Path(img_path)
-    return Path(ANNOTATION_ROOT) / img_path.parent.name / f"{img_path.stem}.seg"
+    """Ruta .seg absoluta: <clase>/<split>__<SAMPLE>__<stem>.seg."""
+    return _seg_path_for_impl(img_path, ANNOTATION_ROOT)
 
 
 def class_images(class_dir: Path) -> List[Path]:
@@ -186,13 +195,12 @@ class ManualContourWorker(QThread):
     _detector_cache_lock = threading.Lock()
     _detector_cache = {}
 
-    def __init__(self, image_bgr, seeds, config, crop_radius=250):
+    def __init__(self, image_bgr, seeds, config):
         super().__init__()
         self.image_bgr = image_bgr
         self.seeds = [(int(x), int(y)) for x, y in seeds]
         self.click_x, self.click_y = self.seeds[0] if self.seeds else (0, 0)
         self.config = config
-        self.crop_radius = crop_radius
 
     def run(self):
         try:
@@ -201,11 +209,9 @@ class ManualContourWorker(QThread):
                 resolve_seeded_object,
             )
 
+            # Mismos parámetros que PreviewWorker / Segmentar: sin rama paralela.
             cfg = self.config or {}
-            h, w = self.image_bgr.shape[:2]
-            params = SeededParams.from_config(cfg).for_demonstration(h, w)
-            if not cfg.get("crop_radius"):
-                params = replace(params, crop_radius=max(params.crop_radius, int(self.crop_radius)))
+            params = SeededParams.from_config(cfg)
 
             detector = self._get_or_create_detector(cfg)
             logger.info(
@@ -440,7 +446,7 @@ class ContourAnalysisTab(QWidget):
         self._selected_grain_idx = -1
         self._current_image_bgr = None
         self._seg_dirty = False  # True si se editó el .seg actual sin guardar
-        self._current_seg_path = None  # Ruta del .seg cargado
+        self._current_seg_path = None  # Ruta del .seg de la imagen cargada
         self._class_to_image_indices = {}  # navegación rápida por clase
         
         # Historial de cambios para UNDO (stack de estados de grains)
@@ -1012,7 +1018,7 @@ class ContourAnalysisTab(QWidget):
         nav_layout.addWidget(QLabel("Imagen:"))
         self.image_combo = QComboBox()
         self.image_combo.setMinimumWidth(220)
-        self.image_combo.currentTextChanged.connect(self._on_image_changed)
+        self.image_combo.currentIndexChanged.connect(self._on_image_changed)
         nav_layout.addWidget(self.image_combo)
 
         self.btn_prev = QPushButton("◀")
@@ -1241,8 +1247,9 @@ class ContourAnalysisTab(QWidget):
         self.roi_multi_component_cb = QCheckBox("Crear múltiples instancias desde ROI")
         self.roi_multi_component_cb.setChecked(False)
         self.roi_multi_component_cb.setToolTip(
-            "Si ROI final tiene varias islas, crea múltiples granos. "
-            "Desactivar para usar solo el contorno mayor."
+            "Activado: une trazos y puede crear varias islas.\n"
+            "Desactivado (recomendado): cada trazo U2-Net es UN ROI; "
+            "Aplicar crea una instancia nueva (no sustituye otra por solape)."
         )
         manual_layout.addWidget(self.roi_multi_component_cb)
 
@@ -2174,6 +2181,24 @@ class ContourAnalysisTab(QWidget):
             self.status_label.setText(f"Directorio no encontrado: {root_dir}")
             return
 
+        # Una sola vez por sesión: renombra .seg legacy ambiguos entre placas.
+        if not getattr(self, "_legacy_seg_migrated", False):
+            try:
+                mig = migrate_legacy_annotations(ANNOTATION_ROOT, SPLIT_DIRS)
+                self._legacy_seg_migrated = True
+                if mig.get("renamed"):
+                    msg = (
+                        f"Migración .seg: {mig['renamed']} renombrados con placa. "
+                        f"Si un stem existía en varias placas, se asignó a train "
+                        f"(val/test de ese stem deben re-etiquetarse)."
+                    )
+                    logger.warning("[Explorer] %s", msg)
+                    if self.parent_window and hasattr(self.parent_window, "log_widget"):
+                        self.parent_window.log_widget.append_log(msg, "WARNING")
+            except Exception as e:
+                self._legacy_seg_migrated = True
+                logger.warning("[Explorer] Migración legacy falló: %s", e)
+
         classes = sorted([d.name for d in root.iterdir() if d.is_dir()])
 
         # Intentar fast path desde registro
@@ -2184,7 +2209,7 @@ class ContourAnalysisTab(QWidget):
         try:
             from src.grain_detection.contour_registry import ContourRegistry
             registry = ContourRegistry.load(root_dir)
-            if registry and not ContourRegistry.is_stale(root_dir):
+            if registry and not ContourRegistry.is_stale(root_dir, ANNOTATION_ROOT):
                 # Fast path: conteos desde el registro
                 for entry in registry["images"]:
                     cls = entry["class"]
@@ -2212,7 +2237,7 @@ class ContourAnalysisTab(QWidget):
 
             for cls in classes:
                 imgs = class_images(root / cls)
-                segs = [f for f in imgs if seg_path_for(f).exists()]
+                segs = [f for f in imgs if find_existing_seg_path(f, ANNOTATION_ROOT)]
                 img_counts[cls] = len(imgs)
                 seg_counts[cls] = len(segs)
                 logger.debug(f"[Explorer] {cls}: {len(imgs)} imgs, {len(segs)} con .seg")
@@ -2340,7 +2365,7 @@ class ContourAnalysisTab(QWidget):
 
         for cls in selected_classes:
             for f in class_images(root / cls):
-                if seg_path_for(f).exists():
+                if find_existing_seg_path(f, ANNOTATION_ROOT):
                     images_with_seg.append(f)
                 else:
                     images_without_seg.append(f)
@@ -2360,23 +2385,34 @@ class ContourAnalysisTab(QWidget):
             cls = img.parent.name
             self._class_to_image_indices.setdefault(cls, []).append(idx)
 
-        # Poblar combo de imágenes con clase como prefijo y estado de .seg
+        # Poblar combo: etiqueta con split|placa|clase para no confundir stems.
         self.image_combo.blockSignals(True)
         self.image_combo.clear()
-        
         for img in images_with_seg:
-            cls_name = img.parent.name
-            self.image_combo.addItem(f"[{cls_name}] {img.stem}", str(img))
-        
+            try:
+                split, plate, stem = identity_for(img)
+                label = f"[{split}|{plate}|{img.parent.name}] {stem}"
+            except AnnotationIdentityError:
+                label = f"[{img.parent.name}] {img.stem} [SIN-ID]"
+            self.image_combo.addItem(label, str(img))
         for img in images_without_seg:
-            cls_name = img.parent.name
-            self.image_combo.addItem(f"[{cls_name}] {img.stem} [sin .seg]", str(img))
-        
+            try:
+                split, plate, stem = identity_for(img)
+                label = f"[{split}|{plate}|{img.parent.name}] {stem} [sin .seg]"
+            except AnnotationIdentityError:
+                label = f"[{img.parent.name}] {img.stem} [sin .seg]"
+            self.image_combo.addItem(label, str(img))
         self.image_combo.blockSignals(False)
         self._refresh_quick_class_controls()
 
+        self._current_seg_path = None
+        self._seg_dirty = False
+
         if images:
+            self.image_combo.blockSignals(True)
             self.image_combo.setCurrentIndex(0)
+            self.image_combo.blockSignals(False)
+            self._current_image_idx = 0
             self._load_current_image()
         else:
             n_cls = len(selected_classes)
@@ -2392,22 +2428,55 @@ class ContourAnalysisTab(QWidget):
             self.quick_image_spin.blockSignals(False)
             self.quick_image_total_label.setText("/0")
 
-    def _on_image_changed(self, image_name):
-        """Cuando cambia la imagen seleccionada en el combo."""
-        idx = self.image_combo.currentIndex()
-        if idx >= 0 and idx < len(self._current_images):
-            self._current_image_idx = idx
-            self._load_current_image()
+    def _on_image_changed(self, new_idx: int):
+        """Único punto de cambio de imagen (combo / prev / next / quick).
+
+        El índice viejo (`_current_image_idx`) sigue apuntando a los granos en
+        memoria hasta confirmar dirty. Solo entonces se actualiza y se carga.
+        """
+        if new_idx < 0 or new_idx >= len(self._current_images):
+            return
+        if new_idx == self._current_image_idx and self._current_image_bgr is not None:
+            return
+
+        if self._seg_dirty:
+            old_name = Path(self._current_images[self._current_image_idx]).name
+            reply = QMessageBox.question(
+                self,
+                "Cambios sin guardar",
+                f"Hay cambios sin guardar en:\n{old_name}\n\n"
+                "¿Guardar antes de cambiar?",
+                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                QMessageBox.Save,
+            )
+            if reply == QMessageBox.Save:
+                self._on_save_seg()
+                if self._seg_dirty:
+                    # Guardado cancelado o fallido: no cambiar de imagen.
+                    self.image_combo.blockSignals(True)
+                    self.image_combo.setCurrentIndex(self._current_image_idx)
+                    self.image_combo.blockSignals(False)
+                    return
+            elif reply == QMessageBox.Cancel:
+                self.image_combo.blockSignals(True)
+                self.image_combo.setCurrentIndex(self._current_image_idx)
+                self.image_combo.blockSignals(False)
+                return
+            else:
+                self._seg_dirty = False
+                self.btn_save_seg.setEnabled(False)
+                self.edit_status_label.setText("")
+
+        self._current_image_idx = new_idx
+        self._load_current_image()
 
     def _on_prev_image(self):
         if self._current_image_idx > 0:
-            self._current_image_idx -= 1
-            self.image_combo.setCurrentIndex(self._current_image_idx)
+            self.image_combo.setCurrentIndex(self._current_image_idx - 1)
 
     def _on_next_image(self):
         if self._current_image_idx < len(self._current_images) - 1:
-            self._current_image_idx += 1
-            self.image_combo.setCurrentIndex(self._current_image_idx)
+            self.image_combo.setCurrentIndex(self._current_image_idx + 1)
 
     def _refresh_quick_class_controls(self):
         """Refresca combos de navegación rápida clase/índice."""
@@ -2460,10 +2529,7 @@ class ContourAnalysisTab(QWidget):
         if not indices:
             self._update_quick_image_controls()
             return
-        target_idx = indices[0]
-        self._current_image_idx = target_idx
-        self.image_combo.setCurrentIndex(target_idx)
-        self._update_quick_image_controls()
+        self.image_combo.setCurrentIndex(indices[0])
 
     def _on_quick_image_number_changed(self, value: int):
         """Salta a la imagen N de la clase seleccionada."""
@@ -2475,43 +2541,35 @@ class ContourAnalysisTab(QWidget):
         target_idx = indices[pos]
         if target_idx == self._current_image_idx:
             return
-        self._current_image_idx = target_idx
         self.image_combo.setCurrentIndex(target_idx)
 
     def _load_current_image(self):
-        """Carga la imagen actual y dibuja contornos."""
+        """Carga `_current_images[_current_image_idx]` y su .seg (sin diálogo dirty)."""
         if not self._current_images or self._current_image_idx >= len(self._current_images):
             return
 
-        # Si hay cambios sin guardar, preguntar
-        if self._seg_dirty:
-            reply = QMessageBox.question(
-                self, "Cambios sin guardar",
-                "Hay cambios sin guardar en el .seg actual.\n¿Guardar antes de cambiar?",
-                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
-                QMessageBox.Save
-            )
-            if reply == QMessageBox.Save:
-                self._on_save_seg()
-            elif reply == QMessageBox.Cancel:
-                return
-            self._seg_dirty = False
-            self.btn_save_seg.setEnabled(False)
-            self.edit_status_label.setText("")
+        img_path = Path(self._current_images[self._current_image_idx])
 
-        img_path = self._current_images[self._current_image_idx]
-        
-        # Limpiar historial al cambiar de imagen
         self._clear_history()
         self._reset_manual_roi_session()
         self._clear_preview()
-        
-        seg_path = seg_path_for(img_path)
-        self._current_seg_path = seg_path
-        
-        logger.debug(f"[Explorer] Cargando {img_path.name}, buscando .seg en {seg_path}")
 
-        # Cargar imagen
+        try:
+            self._current_seg_path = seg_path_for(img_path)
+        except AnnotationIdentityError as e:
+            self._current_seg_path = None
+            logger.error("[Explorer] %s", e)
+            self.image_label.setText(
+                f"Sin identidad absoluta (split+SAMPLE): {img_path.name}"
+            )
+            return
+
+        existing_seg = find_existing_seg_path(img_path, ANNOTATION_ROOT)
+        logger.info(
+            "[Explorer] idx=%d path=%s seg=%s",
+            self._current_image_idx, img_path, existing_seg or self._current_seg_path,
+        )
+
         image = cv2.imread(str(img_path))
         if image is None:
             self.image_label.setText(f"Error leyendo {img_path.name}")
@@ -2522,19 +2580,28 @@ class ContourAnalysisTab(QWidget):
         self.image_label.set_original_size(w_img, h_img)
         self._update_effective_params_label()
 
-        # Leer .seg (solo si existe — no es error que falte)
-        if seg_path.exists():
+        self._current_grains = []
+        if existing_seg is not None:
             try:
                 from src.grain_detection.seg_format import SegFileReader
-                result = SegFileReader.read(str(seg_path))
-                self._current_grains = result.get("grains", [])
+                if not seg_matches_image(existing_seg, img_path, (w_img, h_img)):
+                    logger.warning(
+                        "[Explorer] .seg %s no corresponde a %s — no se dibuja",
+                        existing_seg.name, img_path,
+                    )
+                    if self.parent_window and hasattr(self.parent_window, "log_widget"):
+                        self.parent_window.log_widget.append_log(
+                            f".seg omitido (identidad distinta): {existing_seg.name}",
+                            "WARNING",
+                        )
+                else:
+                    result = SegFileReader.read(str(existing_seg))
+                    self._current_grains = result.get("grains", [])
+                    self._current_seg_path = seg_path_for(img_path)
             except Exception as e:
                 self._current_grains = []
-                logger.warning(f"Error leyendo {seg_path.name}: {e}")
-        else:
-            self._current_grains = []
+                logger.warning(f"Error leyendo {existing_seg.name}: {e}")
 
-        # Dibujar contornos sobre la imagen
         annotated = image.copy()
         for i, grain in enumerate(self._current_grains):
             color = GRAIN_COLORS[i % len(GRAIN_COLORS)]
@@ -2543,40 +2610,28 @@ class ContourAnalysisTab(QWidget):
                 pts = contour.reshape(-1, 1, 2).astype(np.int32)
                 cv2.drawContours(annotated, [pts], -1, color, 2)
 
-            # Dibujar bbox
             bx, by, bw, bh = grain["bbox"]
             cv2.rectangle(annotated, (bx, by), (bx + bw, by + bh), color, 1)
-
-            # Label
             cv2.putText(annotated, f"#{i}", (bx, by - 5),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
-        # Mostrar
         pixmap = numpy_to_qpixmap(annotated, max_width=700, max_height=500)
         self.image_label.setPixmap(pixmap)
 
-        # Info de granos
         n = len(self._current_grains)
         active_info = f" [Grano #{self._active_grain_idx} en edición]" if self._active_grain_idx >= 0 else ""
         self.grain_info_label.setText(
             f"{n} grano{'s' if n != 1 else ''}{active_info} — {self._interaction_hint()}"
         )
 
-        total = len(self._current_images)
-        self.nav_label.setText(f"{self._current_image_idx + 1} / {total}")
+        self.nav_label.setText(f"{self._current_image_idx + 1} / {len(self._current_images)}")
         self._sync_quick_controls_to_current_image()
 
-        # Un .seg ya revisado arranca la clase si aún no tiene envolvente.
         self._adopt_class_envelope()
         clase = self._current_class_name()
-        if (
-            clase
-            and clase not in self._class_envelopes
-            and self._current_grains
-        ):
+        if clase and clase not in self._class_envelopes and self._current_grains:
             self._learn_from_grains(self._current_grains, reason=".seg existente")
 
-        # Seleccionar primer grano
         if self._current_grains:
             self._selected_grain_idx = 0
             self._show_selected_grain()
@@ -2585,6 +2640,10 @@ class ContourAnalysisTab(QWidget):
             self.crop_label.setText("Sin granos")
             self.grain_meta_label.setText("")
             self.grain_nav_label.setText("—")
+
+        self._seg_dirty = False
+        self.btn_save_seg.setEnabled(False)
+        self.edit_status_label.setText("")
 
     def _sync_quick_controls_to_current_image(self):
         """Sincroniza quick class/spin al índice de imagen actual."""
@@ -3027,12 +3086,18 @@ class ContourAnalysisTab(QWidget):
         cv2.drawContours(fill, [poly.reshape(-1, 1, 2)], -1, 255, -1)
 
         if kind == "include":
-            # Las anclas rojas bloquean expansión de la zona verde
             inhibit = self._get_anchor_inhibit_mask()
             if inhibit is not None:
                 fill = cv2.bitwise_and(fill, cv2.bitwise_not(inhibit))
             before = self._roi_include_mask.copy()
-            self._roi_include_mask = cv2.bitwise_or(self._roi_include_mask, fill)
+            one_at_a_time = (
+                hasattr(self, "roi_multi_component_cb")
+                and not self.roi_multi_component_cb.isChecked()
+            )
+            if one_at_a_time:
+                self._roi_include_mask = fill
+            else:
+                self._roi_include_mask = cv2.bitwise_or(self._roi_include_mask, fill)
             self._roi_last_include_seed = seed
             self._harmonize_include_mask(seed=seed)
             filled = int(np.count_nonzero(self._roi_include_mask))
@@ -3099,13 +3164,12 @@ class ContourAnalysisTab(QWidget):
         self._roi_seed_trace[trace_idx]["status"] = "running"
 
         config = self._get_config()
-        radius = int(config.get("crop_radius", 300))
         self.grain_info_label.setText(
             f"U2-Net cerrando trazo de {len(pts)} punto(s) "
             f"({'inclusión' if kind == 'include' else 'exclusión'})..."
         )
         self._manual_worker = ManualContourWorker(
-            self._current_image_bgr, pts, config, crop_radius=radius
+            self._current_image_bgr, pts, config
         )
         self._manual_worker.finished.connect(self._on_manual_roi_seed_result)
         self._manual_worker.error.connect(self._on_manual_roi_seed_error)
@@ -3395,13 +3459,15 @@ class ContourAnalysisTab(QWidget):
 
         self._push_history()
 
-        if target_idx >= 0:
-            # Reemplaza grano target y opcionalmente agrega componentes extra.
-            self._current_grains[target_idx] = created[0]
-            for extra in created[1:]:
-                self._current_grains.append(extra)
-            self._selected_grain_idx = target_idx
-            self._active_grain_idx = target_idx
+        replace_selected = (
+            not multi
+            and self._selected_grain_idx >= 0
+            and self._selected_grain_idx < len(self._current_grains)
+            and target_idx == self._selected_grain_idx
+        )
+        if replace_selected:
+            self._current_grains[self._selected_grain_idx] = created[0]
+            self._active_grain_idx = self._selected_grain_idx
         else:
             self._current_grains.extend(created)
             self._selected_grain_idx = len(self._current_grains) - len(created)
@@ -3596,20 +3662,27 @@ class ContourAnalysisTab(QWidget):
         try:
             from src.grain_detection.seg_format import SegFileWriter
 
-            # Recuperar metadata de la imagen actual
-            img_path = self._current_images[self._current_image_idx]
+            # Siempre la imagen de `_current_image_idx` (aún la vieja si venimos
+            # del diálogo dirty en `_on_image_changed`).
+            img_path = Path(self._current_images[self._current_image_idx])
             h, w = self._current_image_bgr.shape[:2] if self._current_image_bgr is not None else (0, 0)
+            self._current_seg_path = seg_path_for(img_path)
+            params = {"editado_manualmente": "true"}
+            params.update(identity_params_for(img_path))
 
             SegFileWriter.write(
                 str(self._current_seg_path),
-                img_path.name,
+                resolved_image_path(img_path),
                 (h, w),
                 self._current_grains,
-                {"editado_manualmente": "true"},
+                params,
             )
 
             self._mark_clean()
-            logger.info(f"[Edit] Guardado {self._current_seg_path.name}: {len(self._current_grains)} granos")
+            logger.info(
+                "[Edit] Guardado %s <- %s (%d granos)",
+                self._current_seg_path.name, img_path, len(self._current_grains),
+            )
 
             if self.parent_window and hasattr(self.parent_window, 'log_widget'):
                 self.parent_window.log_widget.append_log(
@@ -3897,8 +3970,8 @@ class ContourAnalysisTab(QWidget):
 
             for f in class_images(class_dir):
                 total_images += 1
-                seg = seg_path_for(f)
-                if seg.exists():
+                seg = find_existing_seg_path(f, ANNOTATION_ROOT)
+                if seg is not None:
                     total_seg += 1
                     try:
                         class_grains += SegFileReader.count_grains(str(seg))

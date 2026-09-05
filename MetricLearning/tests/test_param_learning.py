@@ -384,14 +384,15 @@ def test_learned_config_reaches_the_batch_finder(tab):
     assert params.max_area == tab.max_area_spin.value()
 
 
-def test_manual_click_ignores_learned_area_caps(tab):
-    """Si el click heredara max_area, un grano más grande no se podría enseñar."""
+def test_manual_click_uses_same_params_as_batch(tab):
+    """Click y Segmentar leen el mismo SeededParams.from_config(panel)."""
     cfg = tab._get_config()
-    demo = SeededParams.from_config(cfg).for_demonstration(FRAME_H, FRAME_W)
-    assert demo.max_area >= FRAME_H * FRAME_W
-    assert demo.max_area > cfg["max_area"]
-    assert demo.min_area < cfg["min_area"]
-    assert demo.max_area_frac == 1.0
+    click = SeededParams.from_config(cfg)
+    batch = SeededParams.from_config(cfg)
+    assert click == batch
+    assert click.max_area == cfg["max_area"]
+    assert click.min_area == cfg["min_area"]
+    assert click.split_touching == cfg["split_touching"]
 
 
 def test_learning_persists_per_class(tab, tmp_path):

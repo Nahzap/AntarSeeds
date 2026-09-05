@@ -143,22 +143,21 @@ class Styles:
     
     HEADER_MAIN = f"""
         QLabel {{
-            font-size: 18pt;
+            font-size: 16pt;
             font-weight: bold;
             color: {Colors.PRIMARY};
-            padding: 15px;
+            padding: 8px 12px;
             background-color: {Colors.BG_HEADER};
             border-radius: 5px;
-            margin-bottom: 10px;
         }}
     """
     
     HEADER_SECTION = f"""
         QLabel {{
-            font-size: 14pt;
+            font-size: 13pt;
             font-weight: bold;
             color: {Colors.PRIMARY};
-            padding: 10px;
+            padding: 6px 10px;
             background-color: {Colors.BG_HEADER};
             border-radius: 5px;
         }}

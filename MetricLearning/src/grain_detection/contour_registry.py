@@ -20,6 +20,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from src.grain_detection.annotation_paths import (
+    find_existing_seg_path,
+    plate_id_for,
+    seg_path_for,
+)
+from src.grain_detection.seg_format import SegFileReader
+
 logger = logging.getLogger(__name__)
 
 REGISTRY_FILENAME = "contour_registry.json"
@@ -53,8 +60,6 @@ class ContourRegistry:
         if not root.exists():
             raise FileNotFoundError(f"Directorio no encontrado: {root}")
 
-        from src.grain_detection.seg_format import SegFileReader
-
         images_list = []
         total_grains = 0
         grains_per_class = {}
@@ -78,15 +83,19 @@ class ContourRegistry:
                 if f.suffix.lower() not in IMAGE_EXTENSIONS:
                     continue
 
-                # Buscar .seg en ubicación correcta
+                # Buscar .seg en ubicación correcta (placa-aware)
                 if annot_root:
-                    seg_path = annot_root / class_name / f"{f.stem}.seg"
+                    existing = find_existing_seg_path(f, annot_root)
+                    seg_path = existing or seg_path_for(f, annot_root)
                 else:
                     seg_path = f.with_suffix(".seg")
                 entry = {
                     "path": str(f.relative_to(root)),
                     "class": class_name,
                 }
+                plate = plate_id_for(f)
+                if plate:
+                    entry["plate"] = plate
 
                 # Resolver symlink target
                 try:
@@ -199,7 +208,7 @@ class ContourRegistry:
         return Path(root_dir) / REGISTRY_FILENAME
 
     @staticmethod
-    def is_stale(root_dir: str) -> bool:
+    def is_stale(root_dir: str, annotation_root: Optional[str] = None) -> bool:
         """
         Verifica si el registro está desactualizado comparando
         el timestamp del registro con los .seg más recientes.
@@ -213,10 +222,20 @@ class ContourRegistry:
 
         reg_mtime = reg_path.stat().st_mtime
 
-        root = Path(root_dir)
-        for seg_file in root.rglob("*.seg"):
-            if seg_file.stat().st_mtime > reg_mtime:
-                return True
+        search_roots = []
+        if annotation_root:
+            search_roots.append(Path(annotation_root))
+        search_roots.append(Path(root_dir))
+
+        for search_root in search_roots:
+            if not search_root.exists():
+                continue
+            for seg_file in search_root.rglob("*.seg"):
+                try:
+                    if seg_file.stat().st_mtime > reg_mtime:
+                        return True
+                except OSError:
+                    continue
 
         return False
 

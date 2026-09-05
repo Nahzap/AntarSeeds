@@ -1,8 +1,9 @@
 """
 Buscador canónico de objetos: contorno sembrado (ROI).
 
-El click de ROI manual y el lote débil usan la misma función.
-No hay un segundo detector de “polen” para proponer cuerpos.
+Click manual, preview («Probar aquí») y lote («Segmentar») usan el mismo
+camino: ``SeededParams.from_config`` → ``resolve_seeded_object`` /
+``propose_objects``. No hay rama de demostración ni segundo detector.
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import Counter
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import cv2
@@ -47,11 +48,10 @@ class SeededParams:
     waist_frac: float = 0.80
     # Bordes: un contorno cortado por el recorte tiene un lado recto artificial.
     drop_border_objects: bool = False
-    # Click de muestra: sin guardas de tamaño. El lote no usa este flag.
-    demonstration: bool = False
 
     @classmethod
     def from_config(cls, cfg: Optional[Dict[str, Any]] = None) -> "SeededParams":
+        """Única fábrica de parámetros: click, preview y lote leen el mismo dict."""
         c = cfg or {}
         return cls(
             min_area=int(c.get("min_area", 800)),
@@ -70,27 +70,6 @@ class SeededParams:
             seed_core_frac=float(c.get("seed_core_frac", 0.45)),
             waist_frac=float(c.get("waist_frac", 0.80)),
             drop_border_objects=bool(c.get("drop_border_objects", False)),
-        )
-
-    def for_demonstration(self, image_h: int, image_w: int) -> "SeededParams":
-        """
-        Click: mismos umbrales de saliencia; sin topes de área/forma del lote.
-
-        El recorte y max_crop_fill no se tocan: son de U²-Net, no de la especie.
-        Un recorte = encuadre + fill 1.0 aceptaba el rectángulo del marco.
-        """
-        h = max(1, int(image_h))
-        w = max(1, int(image_w))
-        return replace(
-            self,
-            min_area=30,
-            max_area=h * w,
-            max_area_frac=1.0,
-            min_circularity=0.01,
-            max_bbox_side_frac=1.0,
-            max_aspect_ratio=30.0,
-            split_touching=False,
-            demonstration=True,
         )
 
 
@@ -1019,17 +998,16 @@ def resolve_seeded_object(
             last_reason = "el encuadre no es un objeto"
             logger.info("  semilla (%d,%d) r=%d: %s", sx, sy, r, last_reason)
             break
-        if not params.demonstration:
-            reason = validity_reason(mapped, h, w, params)
-            if reason is not None:
-                last_reason = reason
-                logger.debug("  semilla (%d,%d) r=%d: descartada — %s", sx, sy, r, reason)
-                if fallback is not None:
-                    break
-                if r < frame:
-                    r = frame
-                    continue
+        reason = validity_reason(mapped, h, w, params)
+        if reason is not None:
+            last_reason = reason
+            logger.debug("  semilla (%d,%d) r=%d: descartada — %s", sx, sy, r, reason)
+            if fallback is not None:
                 break
+            if r < frame:
+                r = frame
+                continue
+            break
 
         if params.drop_border_objects and touches_image_border(mapped, h, w):
             last_reason = "cuerpo parcial en el borde del encuadre"

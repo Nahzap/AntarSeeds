@@ -183,23 +183,28 @@ class PollenGrainDetector:
         return nms_merge_grains(grains, iou_threshold=iou_threshold)
 
     def _seeded_params(self):
+        """Misma fábrica que click/preview: SeededParams.from_config."""
         from .seeded_contour import SeededParams
 
-        return SeededParams(
-            min_area=int(self.min_area),
-            max_area=int(self.max_area),
-            max_area_frac=float(self.max_area_frac if self.max_area_frac is not None else 0.50),
-            min_circularity=float(self.min_circularity),
-            max_bbox_side_frac=float(self.max_bbox_side_frac),
-            max_aspect_ratio=float(self.max_aspect_ratio),
-            morph_kernel_size=int(self.morph_kernel_size),
-            saliency_threshold=float(self.saliency_threshold),
-            adaptive_k=float(self.adaptive_k),
-            crop_radius=int(self.crop_radius),
-            split_touching=bool(self.split_touching),
-            seed_core_frac=float(self.seed_core_frac),
-            waist_frac=float(self.waist_frac),
-            drop_border_objects=bool(self.drop_border_objects),
+        return SeededParams.from_config(
+            {
+                "min_area": self.min_area,
+                "max_area": self.max_area,
+                "max_area_frac": (
+                    self.max_area_frac if self.max_area_frac is not None else 0.50
+                ),
+                "min_circularity": self.min_circularity,
+                "max_bbox_side_frac": self.max_bbox_side_frac,
+                "max_aspect_ratio": self.max_aspect_ratio,
+                "morph_kernel_size": self.morph_kernel_size,
+                "saliency_threshold": self.saliency_threshold,
+                "adaptive_k": self.adaptive_k,
+                "crop_radius": self.crop_radius,
+                "split_touching": self.split_touching,
+                "seed_core_frac": self.seed_core_frac,
+                "waist_frac": self.waist_frac,
+                "drop_border_objects": self.drop_border_objects,
+            }
         )
 
     @staticmethod

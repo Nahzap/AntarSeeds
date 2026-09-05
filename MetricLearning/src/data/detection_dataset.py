@@ -23,6 +23,7 @@ from src.data.detection_transforms import (
     to_model_tensor,
     train_augment,
 )
+from src.grain_detection.annotation_paths import find_existing_seg_path, seg_path_for
 from src.grain_detection.seg_format import SegFileReader
 from src.utils.detector_resolution_config import resolve_detector_input_size
 
@@ -93,7 +94,8 @@ class FullImageDetectionDataset(Dataset):
 
     def _resolve_seg_path(self, class_dir: Path, img_path: Path) -> Path:
         if self.annotation_root is not None:
-            return self.annotation_root / class_dir.name / f"{img_path.stem}.seg"
+            existing = find_existing_seg_path(img_path, self.annotation_root)
+            return existing or seg_path_for(img_path, self.annotation_root)
         return img_path.with_suffix(".seg")
 
     def _build_index(self) -> None:

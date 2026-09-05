@@ -24,6 +24,7 @@ from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms as T
 
+from src.grain_detection.annotation_paths import find_existing_seg_path, seg_path_for
 from src.grain_detection.seg_format import SegFileReader, has_seg_file
 
 logger = logging.getLogger(__name__)
@@ -155,7 +156,8 @@ class SegmentedGrainDataset(Dataset):
 
                 # Buscar .seg en annotation_root si está configurado, sino junto a la imagen
                 if self.annotation_root is not None:
-                    seg_path = self.annotation_root / class_dir.name / f"{img_path.stem}.seg"
+                    existing = find_existing_seg_path(img_path, self.annotation_root)
+                    seg_path = existing or seg_path_for(img_path, self.annotation_root)
                 else:
                     seg_path = img_path.with_suffix(".seg")
                 

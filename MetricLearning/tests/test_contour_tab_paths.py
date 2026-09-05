@@ -19,14 +19,35 @@ from lib.contour_analysis_tab import (
 )
 
 
-def test_seg_path_is_centralized_by_class():
-    seg = seg_path_for(Path("data/processed/train/C_Quitensis/plate_0001_f1.png"))
-    assert seg == Path(ANNOTATION_ROOT) / "C_Quitensis" / "plate_0001_f1.seg"
+def test_seg_path_is_centralized_by_class(tmp_path):
+    src = tmp_path / "SAMPLE_001" / "plate_0001_f1.png"
+    src.parent.mkdir()
+    src.write_bytes(b"x")
+    img = tmp_path / "data" / "processed" / "train" / "C_Quitensis" / src.name
+    img.parent.mkdir(parents=True)
+    try:
+        img.symlink_to(src)
+    except OSError:
+        img.write_bytes(src.read_bytes())
+    from lib.contour_analysis_tab import ANNOTATION_ROOT, seg_path_for
+    seg = seg_path_for(img)
+    assert seg.parent.name == "C_Quitensis"
+    assert seg.name == "train__SAMPLE_001__plate_0001_f1.seg"
 
 
-def test_seg_path_never_sits_next_to_image():
-    img = Path("data/processed/train/D_Antartica/img.png")
+def test_seg_path_never_sits_next_to_image(tmp_path):
+    src = tmp_path / "SAMPLE_002" / "img.png"
+    src.parent.mkdir()
+    src.write_bytes(b"x")
+    img = tmp_path / "data" / "processed" / "train" / "D_Antartica" / "img.png"
+    img.parent.mkdir(parents=True)
+    try:
+        img.symlink_to(src)
+    except OSError:
+        img.write_bytes(src.read_bytes())
+    from lib.contour_analysis_tab import ANNOTATION_ROOT, seg_path_for
     assert seg_path_for(img) != img.with_suffix(".seg")
+    assert ANNOTATION_ROOT.replace("\\", "/") in str(seg_path_for(img)).replace("\\", "/")
 
 
 def test_class_images_filters_and_sorts(tmp_path):

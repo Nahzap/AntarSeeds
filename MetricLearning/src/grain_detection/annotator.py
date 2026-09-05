@@ -20,6 +20,12 @@ from typing import Callable, Dict, List, Optional, Tuple
 import cv2
 
 from .grain_detector import PollenGrainDetector
+from .annotation_paths import (
+    find_existing_seg_path,
+    identity_params_for,
+    resolved_image_path,
+    seg_path_for,
+)
 from .seg_format import SegFileWriter, get_seg_path, has_seg_file
 
 logger = logging.getLogger(__name__)
@@ -211,12 +217,17 @@ class SegmentationAnnotator:
             if annot_root is not None:
                 class_annot_dir = annot_root / class_name
                 class_annot_dir.mkdir(parents=True, exist_ok=True)
-                seg_path = class_annot_dir / f"{img_path.stem}.seg"
+                seg_path = seg_path_for(img_path, annot_root)
             else:
                 seg_path = Path(get_seg_path(str(img_path)))
 
-            # Skip si ya existe y no overwrite
-            if not overwrite and seg_path.exists():
+            # Skip si ya existe (canonico o legacy atribuible) y no overwrite
+            existing = (
+                find_existing_seg_path(img_path, annot_root)
+                if annot_root is not None
+                else (seg_path if seg_path.exists() else None)
+            )
+            if not overwrite and existing is not None:
                 stats["skipped"] += 1
                 logger.debug(f"[{i + 1}/{total}] {img_path.name}: ya tiene .seg, omitido")
                 if progress_callback:
@@ -318,11 +329,12 @@ class SegmentationAnnotator:
         else:
             seg_path = seg_output_path
         
-        params = self.detector.get_parameters()
+        params = dict(self.detector.get_parameters() or {})
+        params.update(identity_params_for(img_path))
 
         SegFileWriter.write(
             seg_path=seg_path,
-            image_name=img_path.name,
+            image_name=resolved_image_path(img_path),
             image_dims=(h, w),
             detections=detections,
             params=params,
@@ -367,13 +379,15 @@ class SegmentationAnnotator:
             # Determinar ubicación esperada del .seg
             if annot_root:
                 class_name = img_path.parent.name
-                seg = annot_root / class_name / f"{img_path.stem}.seg"
+                seg = find_existing_seg_path(img_path, annot_root) or seg_path_for(
+                    img_path, annot_root
+                )
             else:
                 seg = img_path.with_suffix(".seg")
             
-            expected_segs.add(seg)
+            expected_segs.add(seg if isinstance(seg, Path) else Path(seg))
 
-            if not seg.exists():
+            if not Path(seg).exists():
                 missing_seg.append(str(img_path))
                 continue
 

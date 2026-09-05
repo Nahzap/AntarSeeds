@@ -63,10 +63,11 @@ def validate_annotations(processed_root="data/processed", annotation_root="data/
             class_name = img_path.parent.name
             stats["by_class"][class_name] += 1
             
-            # Buscar anotación en data/annotations/clase/
-            seg_path = annotation_root / class_name / f"{img_path.stem}.seg"
+            # Buscar anotación en data/annotations/clase/ (con placa)
+            from src.grain_detection.annotation_paths import find_existing_seg_path
+            seg_path = find_existing_seg_path(img_path, annotation_root)
             
-            if seg_path.exists():
+            if seg_path is not None and seg_path.exists():
                 stats["with_annotation"] += 1
                 
                 # Verificar que sea parseable

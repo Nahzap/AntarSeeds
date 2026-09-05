@@ -23,6 +23,8 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont, QColor, QPalette
 
+from lib.styles import Styles
+
 # Import para auto-configuración de backbones
 from src.data.transforms_enhanced import get_input_size_for_backbone
 
@@ -374,16 +376,7 @@ class ConfigEditorTab(QWidget):
         
         # Header con info
         header = QLabel("⚙️ Editor de Configuración")
-        header.setStyleSheet("""
-            QLabel {
-                font-size: 14pt;
-                font-weight: bold;
-                color: #0e639c;
-                padding: 10px;
-                background-color: #f0f0f0;
-                border-radius: 5px;
-            }
-        """)
+        header.setStyleSheet(Styles.HEADER_SECTION)
         main_layout.addWidget(header)
         
         # Info del archivo

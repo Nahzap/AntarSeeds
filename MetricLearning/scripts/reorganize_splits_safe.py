@@ -102,7 +102,8 @@ def reorganize_splits(train_ratio=0.7, val_ratio=0.15, test_ratio=0.15, seed=42,
         missing_annot = []
         for img in all_images:
             seg_path = annotation_root / class_name / f"{img.stem}.seg"
-            if not seg_path.exists():
+            from src.grain_detection.annotation_paths import find_existing_seg_path
+            if find_existing_seg_path(img, annotation_root) is None:
                 missing_annot.append(img.name)
         
         if missing_annot:

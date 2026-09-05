@@ -191,11 +191,11 @@ def test_contour_touches_border_detects_truncation():
     assert contour_touches_border(inner, 100, 100) is False
 
 
-def test_demonstration_accepts_body_that_batch_rejects_for_size():
-    """El click no puede heredar max_area: si no, nunca se enseña un grano más grande."""
+def test_click_and_batch_share_area_rejection():
+    """Sin rama demo: los mismos topes rechazan click y lote por igual."""
     sal = _disk(900, 900, 450, 450, 220)
     image = np.zeros((900, 900, 3), dtype=np.uint8)
-    batch = SeededParams(
+    params = SeededParams(
         min_area=80000,
         max_area=20000,
         max_area_frac=0.05,
@@ -207,30 +207,29 @@ def test_demonstration_accepts_body_that_batch_rejects_for_size():
         adaptive_k=0.15,
     )
     provider = crop_saliency_provider(sal)
-    assert resolve_seeded_object(image, (450, 450), batch, provider) is None
-
-    demo = batch.for_demonstration(900, 900)
-    grain = resolve_seeded_object(image, (450, 450), demo, provider)
-    assert grain is not None
-    area = abs(__import__("cv2").contourArea(grain["contour"].reshape(-1, 1, 2)))
-    assert area > 20000
+    assert resolve_seeded_object(image, (450, 450), params, provider) is None
+    assert propose_objects(sal, image, params, saliency_provider=provider) == []
 
 
-def test_for_demonstration_opens_size_caps_and_keeps_saliency():
-    p = SeededParams(min_area=80000, max_area=50000, max_area_frac=0.1,
-                     min_circularity=0.4, crop_radius=120,
-                     saliency_threshold=0.41, adaptive_k=0.33)
-    d = p.for_demonstration(1942, 2590)
-    assert d.min_area <= 50
-    assert d.max_area >= 1942 * 2590
-    assert d.max_area_frac == 1.0
-    assert d.max_bbox_side_frac == 1.0
-    assert d.crop_radius == 120
-    assert d.max_crop_fill == p.max_crop_fill
-    assert d.split_touching is False
-    assert d.demonstration is True
-    assert abs(d.saliency_threshold - 0.41) < 1e-9
-    assert abs(d.adaptive_k - 0.33) < 1e-9
+def test_from_config_is_the_only_param_factory():
+    cfg = {
+        "min_area": 80000,
+        "max_area": 50000,
+        "max_area_frac": 0.1,
+        "min_circularity": 0.4,
+        "crop_radius": 120,
+        "saliency_threshold": 0.41,
+        "adaptive_k": 0.33,
+        "split_touching": True,
+    }
+    p = SeededParams.from_config(cfg)
+    assert p.min_area == 80000
+    assert p.max_area == 50000
+    assert p.crop_radius == 120
+    assert p.split_touching is True
+    assert abs(p.saliency_threshold - 0.41) < 1e-9
+    assert abs(p.adaptive_k - 0.33) < 1e-9
+    assert "demonstration" not in p.__dataclass_fields__
 
 
 def test_fill_holes_at_origin_does_not_become_the_frame():
@@ -301,7 +300,10 @@ def test_interior_high_saliency_closes_local_crop():
         x1, y1, x2, y2 = box
         return np.ones((y2 - y1, x2 - x1), np.float32)
 
-    params = SeededParams(crop_radius=80).for_demonstration(400, 400)
+    params = SeededParams(
+        crop_radius=80, min_area=30, max_area=400 * 400,
+        max_area_frac=1.0, min_circularity=0.01, max_bbox_side_frac=1.0,
+    )
     grain = resolve_seeded_object(image, (200, 200), params, provider)
     assert grain is not None
     bx, by, bw, bh = grain["bbox"]
@@ -344,7 +346,10 @@ def test_resolver_rejects_full_frame_as_object():
         x1, y1, x2, y2 = box
         return np.ones((y2 - y1, x2 - x1), np.float32)
 
-    params = SeededParams(crop_radius=200).for_demonstration(80, 100)
+    params = SeededParams(
+        crop_radius=200, min_area=30, max_area=80 * 100,
+        max_area_frac=1.0, min_circularity=0.01, max_bbox_side_frac=1.0,
+    )
     assert resolve_seeded_object(image, (50, 40), params, provider) is None
 
 

@@ -84,8 +84,21 @@ class SegFileWriter:
         lines.append(f"# Dimensiones: {w}x{h}")
 
         if params:
-            param_str = " | ".join(f"{k}: {v}" for k, v in params.items())
-            lines.append(f"# Params: {param_str}")
+            identity_keys = ("plate", "split", "source", "stem")
+            plate = params.get("plate")
+            split = params.get("split")
+            source = params.get("source")
+            if plate:
+                lines.append(f"# Plate: {plate}")
+            if split:
+                lines.append(f"# Split: {split}")
+            if source:
+                lines.append(f"# Source: {source}")
+            param_str = " | ".join(
+                f"{k}: {v}" for k, v in params.items() if k not in identity_keys
+            )
+            if param_str:
+                lines.append(f"# Params: {param_str}")
 
         lines.append("#")
         lines.append(
@@ -208,6 +221,12 @@ class SegFileReader:
                 metadata["dimensions"] = value
             elif key == "fecha":
                 metadata["timestamp"] = value
+            elif key == "plate":
+                metadata["plate"] = value
+            elif key == "split":
+                metadata["split"] = value
+            elif key == "source":
+                metadata["source"] = value
             elif key == "params":
                 params = {}
                 for part in value.split("|"):
@@ -216,6 +235,8 @@ class SegFileReader:
                         pk, _, pv = part.partition(":")
                         params[pk.strip()] = pv.strip()
                 metadata["params"] = params
+                if "plate" in params and "plate" not in metadata:
+                    metadata["plate"] = params["plate"]
 
     @staticmethod
     def _parse_data_line(line: str) -> Optional[Dict[str, Any]]:

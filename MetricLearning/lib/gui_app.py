@@ -952,7 +952,7 @@ class MainWindow(QMainWindow):
         self.header = QLabel("MetricLearning")
         self.header.setAlignment(Qt.AlignCenter)
         self.header.setStyleSheet(Styles.HEADER_MAIN)
-        self.header.setFixedHeight(50)
+        self.header.setWordWrap(True)
         main_layout.addWidget(self.header)
         
         # === Splitter: Tabs arriba, Log abajo ===
